@@ -1,0 +1,10 @@
+{
+    "require": {
+        "herzult/php-ssh": "dev-dev-functionaltests"
+    },
+    "autoload": {
+        "psr-4": {
+            "SeedSync\\": "src/SeedSync"
+        }
+    }
+}
