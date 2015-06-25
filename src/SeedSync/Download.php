@@ -11,10 +11,11 @@ namespace SeedSync;
 class DownloadException extends \Exception{};
 class Download
 {
-    const TABLE = 'DOWNLOADS';
+    const TABLE = 'Downloads';
 
     protected $db;
 
+    private $id;
     private $hostId;
     private $fileName;
     private $fileSize;
@@ -24,71 +25,119 @@ class Download
     private $status;
     private $downloadPid;
     private $reason;
+    private $dateStarted;
+    private $dateComplete;
 
-    public function __construct(\PDO $db)
+    private $validStatuses = array('DOWNLOADING','NEW','FAILED','COMPLETE','PAUSED','RESUME');
+
+    public function __construct(\PDO $db, \stdClass $download = null)
     {
         $this->db = $db;
+
+        //if download object has been supplied
+        if($download != null){
+            $this->get($download);
+        }
     }
 
-    public static function getAll(\PDO $db, $hostId, $status = false)
+    /**
+     * @param \PDO $db
+     * @param $hostId
+     * @param array $criteria
+     * @param string $order
+     * @return Download[]
+     */
+    public static function getAll(\PDO $db,$criteria = array(), $order = 'Priority ASC, LastModified DESC')
     {
-        $prepareSql = "SELECT * FROM ".self::TABLE." WHERE HostID = :hostId";
-        $params = array('hostId' => $hostId);
+        $numericStatusSql = "CASE `Status` WHEN 'DOWNLOADING' THEN 0	WHEN 'PAUSED' THEN 1 WHEN 'NEW' THEN 2	WHEN 'COMPLETE' THEN 3 ELSE 4 END AS 'NumericStatus'";
+        $prepareSql = "SELECT d.*, $numericStatusSql FROM ".self::TABLE." d ";
 
-        if($status != false)
-        {
-            $prepareSql = $prepareSql." AND Status = :status";
-            $params['status'] = self::convertTextStatus($status);
+        if(count($criteria) >= 1){
+            $prepareSql .= 'WHERE ';
+
+            foreach($criteria as $column => $value){
+                $prepareSql .= $column .' ' . $value['operator'] . ' ' . $value['value'] . ' AND ';
+            }
+            $prepareSql = trim($prepareSql,'AND ');
         }
 
-        $prepareSql = $prepareSql . ' ORDER BY Priority ASC';
+        $prepareSql = $prepareSql . ' ORDER BY `NumericStatus` ASC, '.$order;
 
         $stmt = $db->prepare($prepareSql);
-        $stmt->execute($params);
+        $stmt->execute();
 
         $rows = $stmt->fetchAll(\PDO::FETCH_OBJ);
 
+
+        /**
+         * @var \SeedSync\Download[]
+         */
         $preparedRows = array();
 
         foreach($rows as $row){
-            $preparedRow = new Download($db);
-            $preparedRow->get($row->File,$row);
+            $preparedRow = new Download($db,$row);
             $preparedRows[] = $preparedRow;
         }
+
         return $preparedRows;
     }
 
-    public function add($hostId,$fileName,$lastModified,$fileSize,$priority = '2')
+    public static function getOldStuff($db,$hostId,$status)
     {
-        $status = $this->convertTextStatus('NEW');
-        $stmt = $this->db->prepare("INSERT INTO ".self::TABLE." (HostID,File,FileSize,DateAdded,LastModified,Priority,Status,DownloaderPID) VALUES (:hostId,:file,:fileSize,:dateAdded,:latModified,:priority,:status,:downloaderPID)");
-        $stmt->execute(array('hostId' => $hostId, 'file' => $fileName, 'fileSize' => $fileSize,'dateAdded' => time(), 'latModified' => $lastModified, 'status' => $status ,'priority' => $priority, 'downloaderPID' => '0'));
+        return Download::getAll($db,array('Status' => array('operator' => '=','value' => " '$status' " ),'HostID' => array('operator' => '=','value' => " '$hostId' " )));
     }
 
-    public function get($fileName,$download = null)
+    public function add($hostId,$fileName,$fileSize,$priority = '2')
     {
-        if($download == null) {
+        $now = date('Y-m-d H:i:s');
 
-            $stmt = $this->db->prepare("SELECT * FROM ".self::TABLE." WHERE File = :file");
-            $stmt->execute(array('file' => $fileName));
+        $stmt = $this->db->prepare("INSERT INTO ".self::TABLE." (HostID,File,FileSize,DateAdded,LastModified,Priority,Status,DownloaderPID) VALUES (:hostId,:file,:fileSize,:dateAdded,:latModified,:priority,:status,:downloaderPID)");
+        $stmt->execute(array('hostId' => $hostId, 'file' => $fileName, 'fileSize' => $fileSize,'dateAdded' => $now, 'latModified' => $now, 'status' => 'NEW' ,'priority' => $priority, 'downloaderPID' => '0'));
+    }
 
-            $download = $stmt->fetch(\PDO::FETCH_OBJ);
+    public function delete()
+    {
+        $stmt = $this->db->prepare("DELETE FROM ".self::TABLE." WHERE File = :file");
+        $stmt->execute(array('file' => $this->fileName));
 
-            if($download == false || count($stmt->fetchAll()) == 0)
-            {
-                throw new DownloadException('Could not locate file in the database',400);
-            }
+        if($stmt->rowCount() == 0){
+            throw new DownloadException('Could not delete the download.');
+        }
+    }
+
+    public function getById($id)
+    {
+        $stmt = $this->db->prepare("SELECT * FROM ".self::TABLE." WHERE ID = :id");
+        $stmt->execute(array('id' => $id));
+
+        $download = $stmt->fetch(\PDO::FETCH_OBJ);
+
+        if($download == false)
+        {
+            throw new DownloadException('Could not locate file in the database with id ' . $id,400);
         }
 
-        $this->hostId = $download->HostID;
-        $this->fileName = $fileName;
-        $this->fileSize = $download->FileSize;
-        $this->dateAdded = $download->DateAdded;
-        $this->lastModified = $download->LastModified;
-        $this->priority = $download->Priority;
-        $this->status = $this->convertIntStatus($download->Status);
-        $this->reason = $download->Reason;
-        $this->downloadPid = $download->DownloaderPID;
+        $this->get($download);
+    }
+
+    public function getByName($fileName)
+    {
+        $stmt = $this->db->prepare("SELECT * FROM ".self::TABLE." WHERE File = :file");
+        $stmt->execute(array('file' => $fileName));
+
+        $download = $stmt->fetch(\PDO::FETCH_OBJ);
+
+        if($download == false)
+        {
+            throw new DownloadException('Could not locate file in the database',400);
+        }
+
+        $this->get($download);
+    }
+
+    public function getId()
+    {
+        return $this->id;
     }
 
     public function getHostId()
@@ -101,18 +150,9 @@ class Download
         return $this->fileName;
     }
 
-    public function dateAdded()
+    public function getDateAdded()
     {
-        return $this->hostId;
-    }
-
-    /**
-     * @param mixed $dateModified
-     */
-    public function setLastModified($dateModified)
-    {
-        $this->saveColumn('LastModified',$dateModified);
-        $this->lastModified = $dateModified;
+        return $this->dateAdded;
     }
 
     /**
@@ -121,6 +161,42 @@ class Download
     public function getLastModified()
     {
         return $this->lastModified;
+    }
+
+    /**
+     * @param mixed $dateComplete
+     */
+    public function setDateComplete($dateComplete = null)
+    {
+        $dateComplete = ($dateComplete == null) ? date('Y-m-d H:i:s') : $dateComplete;
+        $this->saveColumn('DateComplete',$dateComplete);
+        $this->dateComplete = $dateComplete;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getDateComplete()
+    {
+        return $this->dateComplete;
+    }
+
+    /**
+     * @param mixed $dateStarted
+     */
+    public function setDateStarted($dateStarted = null)
+    {
+        $dateStarted = ($dateStarted == null) ? date('Y-m-d H:i:s') : $dateStarted;
+        $this->saveColumn('DateStarted',$dateStarted);
+        $this->dateStarted = $dateStarted;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getDateStarted()
+    {
+        return $this->dateStarted;
     }
 
     /**
@@ -141,11 +217,16 @@ class Download
     }
 
     /**
-     * @param mixed $status
+     * @param $status
+     * @throws DownloadException on invalid status
      */
     public function setStatus($status)
     {
-        $status = $this->convertTextStatus($status);
+        //check the status is valid
+        if(in_array($status,$this->validStatuses) === false){
+            throw new DownloadException('Invalid download status',400);
+        }
+
         $this->saveColumn('Status',$status);
         $this->status = $status;
     }
@@ -180,7 +261,7 @@ class Download
      */
     public function setReason($reason)
     {
-        $this->saveColumn('Reason',$reason);
+        $this->saveColumn('Reason',$reason,false);
         $this->reason = $reason;
     }
 
@@ -197,12 +278,13 @@ class Download
      */
     public function setDownloadPid($downloadPid = null)
     {
-        if($downloadPid == null)
-        {
+        $requireUpdate = false;
+        if(isset($downloadPid) === false){
             $downloadPid = getmypid();
+            $requireUpdate = true;
         }
 
-        $this->saveColumn('DownloaderPID',$downloadPid);
+        $this->saveColumn('DownloaderPID',$downloadPid,$requireUpdate);
         $this->downloadPid = $downloadPid;
     }
 
@@ -214,56 +296,31 @@ class Download
         return $this->downloadPid;
     }
 
-    protected function saveColumn($columnName,$value)
+    protected  function get($download = null)
     {
-        $stmt = $this->db->prepare("UPDATE ".self::TABLE." SET $columnName  = :columnValue WHERE File = :file AND HostID = :host");
-        $stmt->execute(array('file' => $this->fileName, 'host' => $this->hostId,'columnValue' => $value));
+        $this->id = $download->ID;
+        $this->hostId = $download->HostID;
+        $this->fileName = $download->File;
+        $this->fileSize = $download->FileSize;
+        $this->dateAdded = strtotime($download->DateAdded);
+        $this->lastModified = strtotime($download->LastModified);
+        $this->priority = $download->Priority;
+        $this->status = $download->Status;
+        $this->reason = $download->Reason;
+        $this->downloadPid = $download->DownloaderPID;
+        $this->dateStarted = strtotime($download->DateStarted);
+        $this->dateComplete = strtotime($download->DateComplete);
+    }
 
-        if($stmt->rowCount() == 0)
+    protected function saveColumn($columnName,$value,$requireUpdate = true)
+    {
+        $now = date('Y-m-d H:i:s');
+        $stmt = $this->db->prepare("UPDATE ".self::TABLE." SET $columnName  = :columnValue, LastModified = :lastModified WHERE ID = :id AND HostID = :host");
+        $stmt->execute(array('id' => $this->id, 'host' => $this->hostId,'columnValue' => $value,'lastModified' => $now));
+
+        if($stmt->rowCount() == 0 && $requireUpdate == true)
         {
             throw new DownloadException('Could not update ' . $columnName);
-        }
-    }
-
-    protected function convertTextStatus($status)
-    {
-        switch($status){
-            case 'DOWNLOADING':
-                return 1;
-                break;
-            case 'NEW':
-                return 2;
-                break;
-            case 'FAILED':
-                return 3;
-                break;
-            case 'COMPLETE':
-                return 4;
-                break;
-            default:
-                throw new DownloadException('Unknown download status',400);
-                break;
-        }
-    }
-
-    protected function convertIntStatus($status)
-    {
-        switch($status){
-            case 1:
-                return 'DOWNLOADING';
-                break;
-            case 2:
-                return 'NEW';
-                break;
-            case 3:
-                return 'FAILED';
-                break;
-            case 4:
-                return 'COMPLETE';
-                break;
-            default:
-                throw new DownloadException('Unknown download status',400);
-                break;
         }
     }
 }

@@ -1,6 +1,8 @@
 {
     "require": {
-        "herzult/php-ssh": "dev-dev-functionaltests"
+        "herzult/php-ssh": "v0.1.0",
+        "sabre/vobject" : "~3.1",
+        "symfony/console" : "~2.6"
     },
     "autoload": {
         "psr-4": {

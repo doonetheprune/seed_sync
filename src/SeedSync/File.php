@@ -34,21 +34,28 @@ class File
         $files = $this->sftp->listDirectory(trim($remotePath,'/'),true);
         $files = $files['files'];
 
+        var_dump($files) . PHP_EOL;
+
         $files = $this->removePathPrefix($remotePath,$files);
 
         foreach($files as $file){
+
+            if(strpos($file,'/AUTO/') === 0){
+                continue;
+            }
+
             try{
                 $dbFile = new Download($this->db);
-                $dbFile->get($file);
+                $dbFile->getByName($file);
             }
             catch(DownloadException $error){
                 $fileInfo = $this->getFileInfo($remotePath.$file);
-                $dbFile->add($hostId,$file,$fileInfo->lastModified,$fileInfo->size);
+                $dbFile->add($hostId,$file,$fileInfo->size);
             }
         }
     }
 
-    public function downloadRemote($fileName,$limit,$encryptionType = 'blowfish')
+    public function downloadRemote($fileName,$limit,$type = 'rsync')
     {
         $host = $this->host->getHost();
         $user = $this->host->getUser();
@@ -57,16 +64,16 @@ class File
 
         $this->createLocalFolderStructure($tempLocal,$fileName);
 
-        //add limit param if set
-        $commandParams = ($limit != false) ? "-l ".($limit * 8)." " :" ";
-
-        //set encryption type
-        $commandParams = $commandParams."-c $encryptionType ";
-
         $remoteFile = escapeshellarg($remotePath.$fileName);
         $localFile = escapeshellarg($tempLocal.$fileName);
 
-        $command = "scp $commandParams \"$user@$host:$remoteFile\" $localFile";
+        if($type == 'rsync'){
+            $command = $this->buildRsyncSshCommand($user,$host,$remoteFile,$localFile,$limit);
+        }
+        else{
+            $command = $this->buildSshCommand($user,$host,$remoteFile,$localFile,$limit);
+        }
+
         exec($command);
 
         if(file_exists($tempLocal.$fileName) == false){
@@ -100,17 +107,46 @@ class File
         unlink($tempLocal);
     }
 
+    public function removeRemote($fileName)
+    {
+        //@TODO remove the remote file
+    }
+
     public function getPercentageComplete($fileName,$originalSize)
     {
         $localFile = $this->host->getLocalTemp().$fileName;
 
-        if(file_exists($localFile) == false){
+
+        if(($rSyncTemp = $this->getRsyncTempFileName($this->host->getLocalTemp(),$fileName) ) !== false){
+            $downloadedFileSize = filesize($rSyncTemp);
+        }
+        else if(file_exists($localFile) !== false){
+            $downloadedFileSize = filesize($localFile);
+        }
+        else{
             return 0;
         }
 
-        $downloadedFileSize = filesize($localFile);
-        $percentage = $originalSize / $downloadedFileSize * 100;
+        if($downloadedFileSize == 0 || $originalSize == 0){
+            return 9999;
+        }
+
+        $percentage = $downloadedFileSize / $originalSize * 100;
         return round($percentage,2);
+    }
+
+    public function humanFileSize($size)
+    {
+        if ($size >= 1073741824) {
+            $fileSize = round($size / 1024 / 1024 / 1024,1) . 'GB';
+        } elseif ($size >= 1048576) {
+            $fileSize = round($size / 1024 / 1024,1) . 'MB';
+        } elseif($size >= 1024) {
+            $fileSize = round($size / 1024,1) . 'KB';
+        } else {
+            $fileSize = $size . ' bytes';
+        }
+        return $fileSize;
     }
 
     protected function readFolder($folderName,$folder)
@@ -170,6 +206,40 @@ class File
         if(file_exists($folderPath) == false)
         {
             mkdir($folderPath,0777,true);
+        }
+    }
+
+    private function buildSshCommand($user,$host,$remoteFile,$localFile,$limit)
+    {
+        //add limit param if set
+        $commandParams = ($limit != false) ? "-l ".($limit * 8)." " :" ";
+
+        //set encryption type
+        $commandParams = $commandParams."-c blowfish -C ";
+
+        return "scp $commandParams \"$user@$host:$remoteFile\" $localFile";
+    }
+
+    private function buildRsyncSshCommand($user,$host,$remoteFile,$localFile,$limit)
+    {
+        $commandParams = ($limit != false) ? "--bwlimit=".$limit." " :" ";
+
+        $commandParams = $commandParams."-L -z --partial --inplace --rsh=ssh ";
+
+        echo "rsync $commandParams \"$user@$host:$remoteFile\" $localFile";
+
+        return "rsync $commandParams \"$user@$host:$remoteFile\" $localFile";
+    }
+
+    private function getRsyncTempFileName ($tempDir,$fileName)
+    {
+        $result = exec("ls $tempDir.$fileName.*");
+
+        if(strpos($result,': No such file or directory') === false){
+            return false;// $result;
+        }
+        else{
+            return false;
         }
     }
 } 

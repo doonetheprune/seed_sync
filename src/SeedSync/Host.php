@@ -14,7 +14,7 @@ use Ssh\Authentication\Password;
 
 class Host
 {
-    const TABLE = 'HOSTS';
+    const TABLE = 'Hosts';
 
     protected $db;
     protected $session;
@@ -36,6 +36,11 @@ class Host
         $this->db = $db;
     }
 
+    /**
+     * @param \PDO $db
+     * @return Host[]
+     * @throws \Exception
+     */
     public static function getAllHosts(\PDO $db)
     {
         $stmt = $db->prepare("SELECT * FROM ".self::TABLE." WHERE Active = 1");
@@ -48,13 +53,15 @@ class Host
         {
             $host = new Host($db);
             $host->get($dbHost->Host);
-            $hosts[] = $host;
+            $hosts[$host->getHostId()] = $host;
         }
         return $hosts;
     }
 
+
     public function addHost($host,$user,$password,$remoteFolder,$localFolder,$localTemp,$maxSpeed,$simultaneousDownloads = 1,$active = true,$publicKey = 'NONE')
     {
+        $id = time() + rand(1,9);
         $active = ($active === true) ? 1 : 0;
         $remoteFolder = (substr($remoteFolder,'-1') != '/') ? '/' : $remoteFolder;
         $localFolder = (substr($localFolder,'-1') != '/') ? '/' : $localFolder;

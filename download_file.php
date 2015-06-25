@@ -2,85 +2,183 @@
 /**
  * Created by PhpStorm.
  * User: ShaunBetts
- * Date: 15/03/14
- * Time: 22:40
+ * Date: 14/06/14
+ * Time: 11:37
  */
+require_once 'vendor/autoload.php';
 
-    require_once 'vendor/autoload.php';
+class FileDownload {
 
-    //Stops all downloads scripts running at the same time
-    sleep(rand(0,10));
+    protected  $db;
+    protected $host;
 
-    $db = \SeedSync\DbConn::getInstance(__DIR__.'/SeedSync.sdb')->get();
+    protected $maxSpeed = 0;
+    protected $speedPerFile = false;
+    protected $maxSimDownloads;
+    protected $ignoreSpeed = false;
 
-    $hosts =\SeedSync\Host::getAllHosts($db);
+    public function __construct($hostName){
 
-    try{
-        $host = new \SeedSync\Host($db);
-        $host->get($argv[1]);
+        $this->db = \SeedSync\DbConn::getInstance()->get();
+
+        try{
+            $this->host = new \SeedSync\Host($this->db);
+            $this->host->get($hostName);
+        }
+        catch (Exception $error){
+            throw $error;
+        }
+
+        $this->maxSpeed = $this->host->getMaxSpeed();
+        $this->maxSimDownloads = $this->host->getSimultaneousDownloads();
+
+        $this->speedPerFile = $this->maxSpeed / $this->maxSimDownloads;
     }
-    catch (Exception $error){
-        echo $error->getMessage().PHP_EOL;
-        exit;
-    }
 
-    $maxSimDownloads = $host->getSimultaneousDownloads();
-    $maxSpeed = $host->getMaxSpeed();
-
-    if($maxSpeed >= 1){
-        $speedPerFile = $maxSpeed / $maxSimDownloads;
-    }
-    else{
-        $speedPerFile = false;
-    }
-
-    $downloading = \SeedSync\Download::getAll($db,$host->getHostId(),'DOWNLOADING');
-
-    $freeDownloadSlots =  $maxSimDownloads - count($downloading);
-
-    if($freeDownloadSlots <= 0)
+    public function shouldRun()
     {
-        exit;
-    }
+        $scheduler = new \SeedSync\Scheduler();
+        $scheduler->setCalendar(file_get_contents(__DIR__.'/calendar.ics'));
 
-    $newDownloads = \SeedSync\Download::getAll($db,$host->getHostId(),'NEW');
+        var_dump($scheduler->checkSchedule()) . PHP_EOL;
 
-    //if there is nothing to download
-    if($newDownloads == null || is_array($newDownloads) == false || count($newDownloads) == 0){
-        exit;
-    }
+        $events = $scheduler->getEventType('download');
 
-    $newDownload = array_slice($newDownloads,0,1);
-    $newDownload = $newDownloads[0];
+        $numberOfEvents = count($events);
 
-    $newDownload->setStatus('DOWNLOADING');
-    $newDownload->setDownloadPid();
-
-    $fileName = $newDownload->getFileName();
-
-    try{
-        $file = new \SeedSync\File($host,$db);
-        $file->downloadRemote($fileName,$speedPerFile);
-
-        $percentageComplete  = $file->getPercentageComplete($fileName,$newDownload->getFileSize());
-
-        echo 'Percentage Complete: ' . $percentageComplete;
-
-        if($percentageComplete >= 99.8)
-        {
-            $newDownload->setStatus('COMPLETE');
-            $file->moveComplete($fileName);
+        if($numberOfEvents == 0){
+            echo date('d/m/Y H:i:s -').' No active events bye!'.PHP_EOL;
+            return false;
         }
-        else
-        {
-            $file->removeTemp($fileName);
-            $newDownload->setStatus('FAILED');
-            $newDownload->setReason("Copied file was to small. It was only $percentageComplete of the original file");
+
+        foreach($events as $event){
+            if(isset($event->host) == false || $event->host != $this->host->getHost()){
+                continue;
+            }
+
+            if(isset($event->ignoreSpeed) == true && $event->ignoreSpeed == true){
+                $this->ignoreSpeed = true;
+                $this->speedPerFile = false;
+            }
+
+            echo date('d/m/Y H:i:s -').' Events says lets download!'.PHP_EOL;
+
+            return true;
         }
     }
-    catch(\SeedSync\FileException $error){
-        $file->removeTemp($fileName);
-        $newDownload->setStatus('FAILED');
-        $newDownload->setReason($error->getMessage());
+
+    public function downloadResumed(){
+        $toResume = \SeedSync\Download::getOldStuff($this->db,$this->host->getHostId(),'RESUME');
+
+        //stop if there are no downloads to resume
+        if(count($toResume) <= 0){
+            echo 'No downloads to resume'.PHP_EOL;
+            return false;
+        }
+
+        $newDownload = $toResume[0];
+        $this->downloadFile($newDownload);
+        return true;
     }
-    $newDownload->setDownloadPid(0);
+
+    public function downloadNew(){
+
+        $freeDownloadSlots = $this->getFreeSlots();
+
+        if($freeDownloadSlots <= 0){
+            echo "No free download slots".PHP_EOL;
+            return false;
+        }
+
+        echo "There are $freeDownloadSlots free download slots".PHP_EOL;
+
+        $newDownloads = \SeedSync\Download::getOldStuff($this->db,$this->host->getHostId(),'NEW');
+
+        //if there is nothing to download
+        if($newDownloads == null || is_array($newDownloads) == false || count($newDownloads) == 0){
+            echo 'Nothing to download!';
+            return false;
+        }
+
+        $newDownload = $newDownloads[0];
+
+        echo 'Downloading ' . $newDownload->getFileName().PHP_EOL;
+
+        $this->downloadFile($newDownload);
+    }
+
+    /**
+     * @param \SeedSync\Download $download
+     */
+    protected function downloadFile($download){
+
+        echo 'Downloading file at ';
+        echo ($this->speedPerFile == false) ? 'max speed' : $this->speedPerFile.' Kbs';
+        echo PHP_EOL;
+
+        $download->setStatus('DOWNLOADING');
+        echo 'Pid set'.PHP_EOL;
+        $download->setDownloadPid();
+        echo 'Status set'.PHP_EOL;
+        $download->setReason('');
+
+        $fileName = $download->getFileName();
+
+        try{
+            $download->setDateStarted();
+            $file = new \SeedSync\File($this->host,$this->db);
+            $file->downloadRemote($fileName,$this->speedPerFile);
+
+            $percentageComplete  = $file->getPercentageComplete($fileName,$download->getFileSize());
+
+            echo 'Percentage Complete: ' . $percentageComplete;
+
+            if($percentageComplete >= 99.8)
+            {
+                $download->setDateComplete();
+                $download->setStatus('COMPLETE');
+                $file->moveComplete($fileName);
+            }
+            else
+            {
+                $file->removeTemp($fileName);
+                $download->setStatus('FAILED');
+                $download->setReason("Copied file was to small. It was only $percentageComplete of the original file");
+            }
+        }
+        catch(\SeedSync\FileException $error){
+            if(isset($file) == true){
+                $file->removeTemp($fileName);
+            }
+            $download->setStatus('FAILED');
+            $download->setReason($error->getMessage());
+        }
+        $download->setDownloadPid(0);
+    }
+
+    private function getFreeSlots(){
+        $downloading = \SeedSync\Download::getOldStuff($this->db,$this->host->getHostId(),'DOWNLOADING');
+        $downloading = array_merge($downloading,\SeedSync\Download::getOldStuff($this->db,$this->host->getHostId(),'PAUSED'));
+        return $this->maxSimDownloads - count($downloading);
+    }
+}
+
+if(isset($argv[1]) == false){
+    echo 'No host provided'.PHP_EOL;
+    exit;
+}
+
+$host = $argv[1];
+
+$fileDownload = new FileDownload($host);
+
+if($fileDownload->shouldRun() == false){
+    exit;
+}
+
+$downloadResumed = $fileDownload->downloadResumed();
+
+//when no downloads are resumed
+if($downloadResumed === false){
+    $fileDownload->downloadNew();
+}
