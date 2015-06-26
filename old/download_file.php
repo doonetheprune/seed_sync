@@ -37,33 +37,41 @@ class FileDownload {
 
     public function shouldRun()
     {
-        $scheduler = new \SeedSync\Scheduler();
-        $scheduler->setCalendar(file_get_contents(__DIR__.'/calendar.ics'));
+        $config = new \SeedSync\Config();
+        $mode = $config->getMode();
 
-        var_dump($scheduler->checkSchedule()) . PHP_EOL;
-
-        $events = $scheduler->getEventType('download');
-
-        $numberOfEvents = count($events);
-
-        if($numberOfEvents == 0){
-            echo date('d/m/Y H:i:s -').' No active events bye!'.PHP_EOL;
+        if($mode == \SeedSync\Config::MODE_ON){
             return false;
-        }
+        }else if ($mode === \SeedSync\Config::MODE_CALENDAR){
+            $scheduler = new \SeedSync\Scheduler();
+            $scheduler->setCalendar(file_get_contents(__DIR__.'/calendar.ics'));
 
-        foreach($events as $event){
-            if(isset($event->host) == false || $event->host != $this->host->getHost()){
-                continue;
+            $events = $scheduler->getEventType('download');
+
+            $numberOfEvents = count($events);
+
+            if($numberOfEvents == 0){
+                echo date('d/m/Y H:i:s -').' No active events bye!'.PHP_EOL;
+                return false;
             }
 
-            if(isset($event->ignoreSpeed) == true && $event->ignoreSpeed == true){
-                $this->ignoreSpeed = true;
-                $this->speedPerFile = false;
+            foreach($events as $event){
+                if(isset($event->host) == false || $event->host != $this->host->getHost()){
+                    continue;
+                }
+
+                if(isset($event->ignoreSpeed) == true && $event->ignoreSpeed == true){
+                    $this->ignoreSpeed = true;
+                    $this->speedPerFile = false;
+                }
+
+                echo date('d/m/Y H:i:s -').' Events says lets download!'.PHP_EOL;
+
+                return true;
             }
-
-            echo date('d/m/Y H:i:s -').' Events says lets download!'.PHP_EOL;
-
-            return true;
+        }else{
+            echo 'No need to do anything mode is ' . $mode.PHP_EOL;
+            return false;
         }
     }
 

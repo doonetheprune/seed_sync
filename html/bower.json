@@ -1,0 +1,29 @@
+{
+  "name": "SeedSync",
+  "version": "0.0.0",
+  "homepage": "https://github.com/doonetheprune/seed_sync",
+  "authors": [
+    "Shaun Betts <shaun@betts.be>"
+  ],
+  "description": "Sync SeedBox to home server",
+  "license": "MIT",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "main": [
+    "dist/css/SeedSync.css",
+    "dist/js/SeedSync.js"
+  ],
+  "dependencies": {
+    "jquery": "~2.1.4",
+    "promises": "~1.0.10",
+    "ractive-load": "0.4.0",
+    "ractive": "0.6.0",
+    "bootstrap": "3.3.2",
+    "fontawesome": "~4.3.0"
+  }
+}

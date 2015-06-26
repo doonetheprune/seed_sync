@@ -13,6 +13,11 @@ class Download
 {
     const TABLE = 'Downloads';
 
+    const STATUS_NEW = 'NEW';
+    const STATUS_PAUSED = 'PAUSED';
+    const STATUS_RESUME = 'RESUME';
+    const STATUS_DOWNLOADING = 'DOWNLOADING';
+
     protected $db;
 
     private $id;
@@ -82,6 +87,18 @@ class Download
         return $preparedRows;
     }
 
+
+    /**
+     * @param $db
+     * @param Host $host
+     * @param $status
+     * @return Download[]
+     */
+    public static function getDownloadsForHost($db,$host,$status)
+    {
+        return Download::getAll($db,array('Status' => array('operator' => '=','value' => " '$status' " ),'HostID' => array('operator' => '=','value' => " '{$host->getHostId()}' " )));
+    }
+
     public static function getOldStuff($db,$hostId,$status)
     {
         return Download::getAll($db,array('Status' => array('operator' => '=','value' => " '$status' " ),'HostID' => array('operator' => '=','value' => " '$hostId' " )));
@@ -127,12 +144,18 @@ class Download
 
         $download = $stmt->fetch(\PDO::FETCH_OBJ);
 
-        if($download == false)
-        {
+        if($download == false){
             throw new DownloadException('Could not locate file in the database',400);
         }
 
         $this->get($download);
+    }
+
+    public function pauseDownload()
+    {
+        $pidKill = new PidKill();
+        $pidKill->addPid($this);
+        $this->setStatus(self::STATUS_PAUSED);
     }
 
     public function getId()

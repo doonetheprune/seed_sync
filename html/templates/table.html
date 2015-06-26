@@ -1,0 +1,22 @@
+<table class="table table-responsive">
+    <thead>
+    <th>Priority</th>
+    <th>File</th>
+    <th>Size</th>
+    <th>Date Added</th>
+    <th>Date Complete</th>
+    <th>Last Modified</th>
+    </thead>
+    <tbody>
+    {{#each downloads}}
+    <tr class="{{ status == "NEW" ? "info" : status == "COMPLETE" ? "success" : status == "FAILED" ? "danger" : ""}}">
+        <td>{{priority}}</td>
+        <td>{{file}}</td>
+        <td>{{size}}</td>
+        <td>{{dateAdded}}</td>
+        <td>{{dateComplete}}</td>
+        <td>{{lastModified}}</td>
+    </tr>
+    {{/each}}
+    </tbody>
+</table>

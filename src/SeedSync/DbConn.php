@@ -14,10 +14,11 @@ class DbConn {
     private static $instance;
     protected $db;
 
-    protected function __construct($dbPath)
+    protected function __construct()
     {
         try {
-            $this->db = new \PDO('sqlite:'.$dbPath);
+            $config = parse_ini_file(__DIR__.'/../../config.ini');
+            $this->db = new \PDO($config['DSN'].';dbname=SeedSync', $config['DB_USER'], $config['DB_PASS']);
             $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         }
         catch(\PDOException $e){
@@ -30,11 +31,11 @@ class DbConn {
      * @param $dbPath
      * @return DbConn
      */
-    public static function getInstance ($dbPath)
+    public static function getInstance ()
     {
         if (self::$instance == null)
         {
-            self::$instance = new DbConn($dbPath);
+            self::$instance = new DbConn();
         }
         return self::$instance;
     }
